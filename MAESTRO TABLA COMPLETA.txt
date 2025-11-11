@@ -1,0 +1,414 @@
+*&---------------------------------------------------------------------*
+*& Report  ZRACR
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+REPORT zracr_tabla.
+*-----------------------------------------------------------------------*
+TYPES: BEGIN OF ty_head,
+         h(10) TYPE c,
+       END OF ty_head.
+
+DATA: lt_head          TYPE TABLE OF  ty_head WITH HEADER LINE,
+      o_ref            TYPE REF TO    data,
+      l_tabledescr_ref TYPE REF TO    cl_abap_tabledescr,
+      l_descr_ref      TYPE REF TO    cl_abap_structdescr,
+      lt_headx         TYPE TABLE OF  char10,
+      w_fullp          TYPE string,
+      w_file           TYPE string,
+      w_path           TYPE string,
+      it_file          TYPE filetable,
+      gd_subrc         TYPE i,
+      o_tab            TYPE REF TO    data,
+      o_lin            TYPE REF TO    data,
+      ol_lin           TYPE REF TO    data,
+      lt_col           TYPE TABLE OF  char20 WITH HEADER LINE,
+      lt_tab           TYPE TABLE OF  alsmex_tabline,
+      le_tab           LIKE LINE OF   lt_tab,
+      lv_campo         TYPE           string,
+      lv_row           TYPE           i,
+      t_data           TYPE STANDARD TABLE OF tab512,
+      t_fields         TYPE STANDARD TABLE OF rfc_db_fld,
+      lv_txt           TYPE                   string,
+      lv_con_c         TYPE n LENGTH 6,
+      lv_con_e         TYPE n LENGTH 6,
+      lv_table         TYPE                   dd02l-tabname.
+
+FIELD-SYMBOLS: <lt_table> TYPE STANDARD TABLE,
+               <le_line>  .
+*-----------------------------------------------------------------------*
+
+*-----------------------------------------------------------------------*
+SELECTION-SCREEN: BEGIN OF BLOCK b1 WITH FRAME TITLE text-z01 .
+PARAMETERS: sube  RADIOBUTTON GROUP rad1 DEFAULT 'X' USER-COMMAND fx,
+            baja  RADIOBUTTON GROUP rad1,
+            borra RADIOBUTTON GROUP rad1.
+SELECTION-SCREEN: END OF BLOCK b1.
+
+SELECTION-SCREEN: BEGIN OF BLOCK b2 WITH FRAME TITLE text-z02 .
+PARAMETERS: table TYPE tabname,
+            file  TYPE localfile MODIF ID xxx NO-DISPLAY,
+            test  AS CHECKBOX MODIF ID bas.
+SELECTION-SCREEN: END OF BLOCK b2.
+
+SELECTION-SCREEN: BEGIN OF BLOCK b3 WITH FRAME TITLE text-z03 .
+PARAMETERS: dest AS CHECKBOX USER-COMMAND zz MODIF ID rfc,
+            rfc  TYPE rfcdisplay-rfcdest     MODIF ID rfc.
+SELECTION-SCREEN: END OF BLOCK b3.
+*-----------------------------------------------------------------------*
+
+AT SELECTION-SCREEN OUTPUT.
+  LOOP AT SCREEN.
+    IF dest IS INITIAL.
+      IF screen-group1 EQ 'RFC'.
+        screen-active = 0.
+      ENDIF.
+    ELSE.
+      IF screen-group1 EQ 'RFC'.
+        screen-active = 1.
+      ENDIF.
+    ENDIF.
+
+    IF borra IS NOT INITIAL.
+      IF screen-group1 EQ 'RFC' .
+        screen-active = 0.
+      ENDIF.
+    ELSE.
+      IF screen-group1 EQ 'RFC' .
+        screen-active = 1.
+      ENDIF.
+    ENDIF.
+
+    IF sube IS NOT INITIAL.
+      IF screen-group1 EQ 'RFC' .
+        screen-active = 0.
+      ENDIF.
+    ELSE.
+      IF screen-group1 EQ 'RFC' .
+        screen-active = 1.
+      ENDIF.
+    ENDIF.
+
+    MODIFY SCREEN.
+
+  ENDLOOP.
+
+  IF sube IS NOT INITIAL.
+    CLEAR: dest, rfc.
+  ENDIF.
+*-----------------------------------------------------------------------*
+START-OF-SELECTION.
+
+*Asigna estructura al apuntador tipo tabla
+  CREATE DATA o_ref TYPE TABLE OF (table).
+  ASSIGN o_ref->* TO <lt_table>.
+
+  CREATE DATA ol_lin TYPE (table).
+  ASSIGN ol_lin->* TO <le_line>.
+
+  CASE 'X'.
+    WHEN baja.
+
+      IF dest IS INITIAL.
+        SELECT *
+        INTO TABLE <lt_table>
+        FROM (table).
+
+      ELSE.
+        lv_table = table.
+
+        CALL FUNCTION 'RFC_READ_TABLE' DESTINATION rfc "'ELQ'
+          EXPORTING
+            query_table          = lv_table
+          TABLES
+            fields               = t_fields
+            data                 = t_data
+          EXCEPTIONS
+            table_not_available  = 1
+            table_without_data   = 2
+            option_not_valid     = 3
+            field_not_valid      = 4
+            not_authorized       = 5
+            data_buffer_exceeded = 6
+            OTHERS               = 7.
+
+        LOOP AT t_data ASSIGNING FIELD-SYMBOL(<le_data>).
+          LOOP AT t_fields ASSIGNING FIELD-SYMBOL(<le_fiel>).
+
+            CONCATENATE '<LE_LINE>-' <le_fiel>-fieldname INTO lv_campo.
+            CONDENSE lv_campo NO-GAPS.
+            ASSIGN (lv_campo) TO FIELD-SYMBOL(<fs_campo>).
+
+            IF <fs_campo> IS ASSIGNED.
+              <fs_campo> = <le_data>-wa+<le_fiel>-offset(<le_fiel>-length).
+
+            ELSE.
+              CONTINUE.
+
+            ENDIF.
+
+            APPEND <le_line> TO <lt_table>.
+          ENDLOOP.
+        ENDLOOP.
+
+      ENDIF.
+
+      IF sy-subrc EQ 0.
+*    Lee campos de la tabla
+        l_tabledescr_ref  ?= cl_abap_typedescr=>describe_by_data( <lt_table> ).
+        l_descr_ref       ?= l_tabledescr_ref->get_table_line_type( ).
+
+        LOOP AT l_descr_ref->components ASSIGNING FIELD-SYMBOL(<table>).
+          APPEND INITIAL LINE TO lt_head ASSIGNING FIELD-SYMBOL(<head>).
+          MOVE: <table>-name TO <head>.
+        ENDLOOP.
+
+        w_path = table.
+
+        IF  <lt_table> IS ASSIGNED.
+
+          IF test IS INITIAL.
+
+            CALL METHOD cl_gui_frontend_services=>file_save_dialog
+              EXPORTING
+                window_title      = 'Selecciona una ruta'
+                default_file_name = w_path
+              CHANGING
+                filename          = w_file
+                path              = w_path
+                fullpath          = w_fullp.
+
+            CONCATENATE w_path table'.XLS' INTO w_fullp.
+
+            CALL FUNCTION 'GUI_DOWNLOAD'
+              EXPORTING
+                filename              = w_fullp
+                filetype              = 'ASC'
+                write_field_separator = 'X'
+                header                = '00'
+              TABLES
+                data_tab              = <lt_table>
+                fieldnames            = lt_head[]
+              EXCEPTIONS
+                OTHERS                = 1.
+
+            IF sy-subrc EQ 0.
+              COMMIT WORK.
+              MESSAGE 'Se descargo exito' TYPE 'I'.
+            ELSE.
+              ROLLBACK WORK.
+              MESSAGE 'No se pudo descargar' TYPE 'I'.
+            ENDIF.
+
+          ELSE.
+
+            PERFORM print_alv TABLES <lt_table>.
+
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+    WHEN sube.
+
+      CALL METHOD cl_gui_frontend_services=>file_open_dialog
+        EXPORTING
+          window_title      = 'Selección de archivo a subir'
+          default_extension = '*.xls'
+        CHANGING
+          file_table        = it_file
+          rc                = gd_subrc.
+
+      IF sy-subrc = 0.
+        READ TABLE it_file INDEX 1 INTO file.
+      ENDIF.
+
+      IF file IS NOT INITIAL.
+
+        CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+          EXPORTING
+            filename                = file
+            i_begin_col             = 1
+            i_begin_row             = 1
+            i_end_col               = 256
+            i_end_row               = 65536
+          TABLES
+            intern                  = lt_tab
+          EXCEPTIONS
+            inconsistent_parameters = 1
+            upload_ole              = 2
+            OTHERS                  = 3.
+
+        IF sy-subrc <> 0.
+          MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+          WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+
+        ELSE.
+          LOOP AT  lt_tab INTO le_tab.
+            lv_row = le_tab-row.
+
+            IF lv_row EQ 1.
+              lt_col = le_tab-value.
+              APPEND lt_col.
+              CONTINUE.
+            ENDIF.
+
+            READ TABLE lt_col INDEX le_tab-col.
+            IF sy-subrc EQ 0.
+              CONCATENATE '<LE_LINE>-' lt_col INTO lv_campo.
+              CONDENSE lv_campo NO-GAPS.
+              ASSIGN (lv_campo) TO FIELD-SYMBOL(<fs_data>).
+
+              IF <fs_data> IS ASSIGNED.
+                IF lt_col EQ 'MANDT'.
+                  le_tab-value = sy-mandt.
+                ENDIF.
+
+                <fs_data> = le_tab-value.
+
+                UNASSIGN <fs_data>.
+
+              ENDIF.
+            ENDIF.
+
+            AT END OF row.
+              APPEND <le_line> TO <lt_table>.
+            ENDAT.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
+
+      IF <lt_table> IS ASSIGNED.
+        IF test IS INITIAL.
+
+*          MODIFY (table) FROM TABLE <lt_table>.
+          LOOP AT <lt_table> ASSIGNING <le_line>.
+
+            MODIFY (table) FROM <le_line>.
+
+            IF sy-subrc EQ 0.
+              COMMIT WORK.
+              ADD 1 TO lv_con_c.
+*          MESSAGE 'Se actualizo con exito' TYPE 'I'.
+            ELSE.
+              ADD 1 TO lv_con_e.
+*          ROLLBACK WORK.
+*          MESSAGE 'No se pudo actualizar' TYPE 'I'.
+            ENDIF.
+          ENDLOOP.
+
+            CONCATENATE 'Se actualizarón:' lv_con_c INTO  lv_txt.
+            MESSAGE lv_txt TYPE 'I' DISPLAY LIKE 'S'.
+
+            CONCATENATE 'No se actualizarón:' lv_con_e INTO  lv_txt.
+            MESSAGE lv_txt TYPE 'I' DISPLAY LIKE 'E'.
+
+        ELSE.
+
+          PERFORM print_alv TABLES <lt_table>.
+
+        ENDIF.
+      ENDIF.
+
+    WHEN borra.
+      SELECT *
+      INTO TABLE <lt_table>
+      FROM (table).
+
+      IF <lt_table> IS ASSIGNED.
+        IF test IS INITIAL.
+          LOOP AT <lt_table> ASSIGNING <le_line>.
+
+            DELETE (table) FROM <le_line>.
+
+            IF sy-subrc EQ 0.
+              COMMIT WORK.
+              ADD 1 TO lv_con_c.
+            ELSE.
+              ADD 1 TO lv_con_e.
+            ENDIF.
+
+          ENDLOOP.
+
+          IF test IS INITIAL.
+            CONCATENATE 'Se borrarón:' lv_con_c INTO  lv_txt.
+            MESSAGE lv_txt TYPE 'I' DISPLAY LIKE 'S'.
+
+            CONCATENATE 'Error del borrado:' lv_con_e INTO  lv_txt.
+            MESSAGE lv_txt TYPE 'I' DISPLAY LIKE 'E'.
+          ENDIF.
+
+        ELSE.
+
+          PERFORM print_alv TABLES <lt_table>.
+
+        ENDIF.
+      ENDIF.
+
+  ENDCASE.
+
+
+*&---------------------------------------------------------------------*
+*&      Form  PRINT_ALV
+*&---------------------------------------------------------------------*
+FORM print_alv  TABLES   t_alv .
+  DATA: lr_aggregations TYPE REF TO cl_salv_aggregations,
+        lr_display      TYPE REF TO cl_salv_display_settings.
+
+  DATA: lr_layout    TYPE REF TO cl_salv_layout,
+        lr_alv       TYPE REF TO cl_salv_table,
+        lr_columns   TYPE REF TO cl_salv_columns_table,
+        lr_events    TYPE REF TO cl_salv_events_table,
+        lr_column    TYPE REF TO cl_salv_column,
+        lr_columni   TYPE REF TO cl_salv_column_table,
+        ls_key       TYPE salv_s_layout_key,
+        lr_functions TYPE REF TO cl_salv_functions_list.
+
+  DATA: lv_scrtext_l TYPE scrtext_l,
+        lv_scrtext_s TYPE scrtext_s,
+        lv_scrtext_m TYPE scrtext_m.
+
+
+  "Configurando el ALV
+  CALL METHOD cl_salv_table=>factory
+    IMPORTING
+      r_salv_table = lr_alv
+    CHANGING
+      t_table      = t_alv[].
+
+**//.. Layout
+  lr_layout     = lr_alv->get_layout( ).
+  ls_key-report = sy-repid.
+  lr_layout->set_key( ls_key ).
+
+**//..  set usage of default Layouts
+  lr_layout->set_default( abap_true ).
+
+*  lo_sel = lr_alv->get_selections( ).
+*  lo_sel->set_selection_mode( if_salv_c_selection_mode=>multiple )."single ).
+
+**//.. set Layout save restriction
+  lr_layout->set_save_restriction( if_salv_c_layout=>restrict_none ).
+  lr_display = lr_alv->get_display_settings( ).
+  lr_display->set_striped_pattern( cl_salv_display_settings=>true ).
+
+*"Titulo ALV
+  DATA: lv_title TYPE lvc_title.
+  lv_title = 'Base de proceso'.
+  lr_display->set_list_header( lv_title ).
+
+
+**//.. Enable Generic ALV functions
+  lr_functions = lr_alv->get_functions( ).
+  lr_functions->set_all( ).
+
+**//.. optimize output
+  lr_columns = lr_alv->get_columns( ).
+  lr_columns->set_optimize( abap_true ).
+
+
+  lr_alv->display( ).
+
+
+ENDFORM.                    " PRINT_ALV
